@@ -5,6 +5,7 @@ from operators.email_schema_change_operator import EmailSchemaChangeOperator
 from utils.mozetl import mozetl_envvar
 from utils.tbv import tbv_envvar
 from search_rollup import add_search_rollup
+from os import environ
 
 default_args = {
     'owner': 'mreid@mozilla.com',
@@ -17,20 +18,36 @@ default_args = {
     'retry_delay': timedelta(minutes=30),
 }
 
+is_dev = environ.get("DEPLOY_ENVIRONMENT") == "dev"
+
+
+def instances(prod, dev=1):
+    return dev if is_dev else prod
+
+
 # Make sure all the data for the given day has arrived before running.
 # Running at 1am should suffice.
 dag = DAG('main_summary', default_args=default_args, schedule_interval='0 1 * * *')
+
+
+main_summary_config = {
+    "from": "{{ ds_nodash }}",
+    "to": "{{ ds_nodash }}",
+    "schema-report-location": "s3://{{ task.__class__.private_output_bucket }}/schema/main_summary/submission_date_s3={{ ds_nodash }}",
+    "bucket": "{{ task.__class__.private_output_bucket }}"
+}
+if is_dev:
+    main_summary_config.update({
+        "channel": "nightly",    # run on smaller nightly data rather than release
+        "read-mode": "aligned",  # more efficient RDD splitting for small datasets
+    })
 
 main_summary = EMRSparkOperator(
     task_id="main_summary",
     job_name="Main Summary View",
     execution_timeout=timedelta(hours=14),
-    instance_count=40,
-    env=tbv_envvar("com.mozilla.telemetry.views.MainSummaryView", {
-        "from": "{{ ds_nodash }}",
-        "to": "{{ ds_nodash }}",
-        "schema-report-location": "s3://{{ task.__class__.private_output_bucket }}/schema/main_summary/submission_date_s3={{ ds_nodash }}",
-        "bucket": "{{ task.__class__.private_output_bucket }}"}),
+    instance_count=instances(prod=40, dev=1),
+    env=tbv_envvar("com.mozilla.telemetry.views.MainSummaryView", main_summary_config),
     uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/telemetry_batch_view.py",
     dag=dag)
 
@@ -45,7 +62,7 @@ experiments_error_aggregates = EMRSparkOperator(
     task_id="experiments_error_aggregates",
     job_name="Experiments Error Aggregates View",
     execution_timeout=timedelta(hours=5),
-    instance_count=20,
+    instance_count=instances(prod=20),
     owner="frank@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "frank@mozilla.com"],
     env={"date": "{{ ds_nodash }}", "bucket": "{{ task.__class__.private_output_bucket }}"},
@@ -56,7 +73,7 @@ engagement_ratio = EMRSparkOperator(
     task_id="engagement_ratio",
     job_name="Update Engagement Ratio",
     execution_timeout=timedelta(hours=6),
-    instance_count=10,
+    instance_count=instances(prod=10),
     env=mozetl_envvar("engagement_ratio", {
         "input_bucket": "{{ task.__class__.private_output_bucket }}",
         "output_bucket": """
@@ -74,7 +91,7 @@ addons = EMRSparkOperator(
     task_id="addons",
     job_name="Addons View",
     execution_timeout=timedelta(hours=4),
-    instance_count=3,
+    instance_count=instances(prod=3),
     env=tbv_envvar("com.mozilla.telemetry.views.AddonsView", {
         "from": "{{ ds_nodash }}",
         "to": "{{ ds_nodash }}",
@@ -102,7 +119,7 @@ addon_aggregates = EMRSparkOperator(
     execution_timeout=timedelta(hours=8),
     owner="bmiroglio@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "bmiroglio@mozilla.com"],
-    instance_count=10,
+    instance_count=instances(prod=10),
     env=mozetl_envvar("addon_aggregates", {
         "date": "{{ ds_nodash }}",
         "input-bucket": "{{ task.__class__.private_output_bucket }}",
@@ -117,7 +134,7 @@ txp_mau_dau = EMRSparkOperator(
     execution_timeout=timedelta(hours=4),
     owner="ssuh@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "ssuh@mozilla.com"],
-    instance_count=5,
+    instance_count=instances(prod=5),
     env={"date": "{{ ds_nodash }}",
          "bucket": "{{ task.__class__.private_output_bucket }}",
          "prefix": "txp_mau_dau_simple",
@@ -130,7 +147,7 @@ main_summary_experiments = EMRSparkOperator(
     task_id="main_summary_experiments",
     job_name="Experiments Main Summary View",
     execution_timeout=timedelta(hours=10),
-    instance_count=10,
+    instance_count=instances(prod=10),
     owner="ssuh@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "frank@mozilla.com", "ssuh@mozilla.com", "robhudson@mozilla.com"],
     env=tbv_envvar("com.mozilla.telemetry.views.ExperimentSummaryView", {
@@ -144,7 +161,7 @@ experiments_aggregates = EMRSparkOperator(
     task_id="experiments_aggregates",
     job_name="Experiments Aggregates View",
     execution_timeout=timedelta(hours=15),
-    instance_count=20,
+    instance_count=instances(prod=20),
     owner="ssuh@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "frank@mozilla.com", "ssuh@mozilla.com", "robhudson@mozilla.com"],
     env=tbv_envvar("com.mozilla.telemetry.views.ExperimentAnalysisView", {
@@ -169,7 +186,7 @@ search_dashboard = EMRSparkOperator(
     task_id="search_dashboard",
     job_name="Search Dashboard",
     execution_timeout=timedelta(hours=3),
-    instance_count=3,
+    instance_count=instances(prod=3),
     owner="harterrt@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "harterrt@mozilla.com", "wlachance@mozilla.com"],
     env=mozetl_envvar("search_dashboard", {
@@ -187,7 +204,7 @@ search_clients_daily = EMRSparkOperator(
     task_id="search_clients_daily",
     job_name="Search Clients Daily",
     execution_timeout=timedelta(hours=5),
-    instance_count=5,
+    instance_count=instances(prod=5),
     owner="harterrt@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "harterrt@mozilla.com", "wlachance@mozilla.com"],
     env=mozetl_envvar("search_clients_daily", {
@@ -205,7 +222,7 @@ clients_daily = EMRSparkOperator(
     task_id="clients_daily",
     job_name="Clients Daily",
     execution_timeout=timedelta(hours=5),
-    instance_count=10,
+    instance_count=instances(prod=10),
     env=mozetl_envvar("clients_daily", {
         # Note that the output of this job will be earlier
         # than this date to account for submission latency.
@@ -224,7 +241,7 @@ clients_daily_v6 = EMRSparkOperator(
     owner="relud@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "relud@mozilla.com"],
     execution_timeout=timedelta(hours=5),
-    instance_count=10,
+    instance_count=instances(prod=10),
     env=tbv_envvar("com.mozilla.telemetry.views.ClientsDailyView", {
         "date": "{{ ds_nodash }}",
         "input-bucket": "{{ task.__class__.private_output_bucket }}",
@@ -239,7 +256,7 @@ retention = EMRSparkOperator(
     owner="amiyaguchi@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "amiyaguchi@mozilla.com"],
     execution_timeout=timedelta(hours=4),
-    instance_count=10,
+    instance_count=instances(prod=10),
     env=mozetl_envvar("retention", {
         "start_date": "{{ ds_nodash }}",
         "input_bucket": "{{ task.__class__.private_output_bucket }}",
@@ -255,7 +272,7 @@ client_count_daily_view = EMRSparkOperator(
     execution_timeout=timedelta(hours=10),
     owner="relud@mozilla.com",
     email=["telemetry-alerts@mozilla.com", "relud@mozilla.com"],
-    instance_count=10,
+    instance_count=instances(prod=10),
     env={"date": "{{ ds_nodash }}", "bucket": "{{ task.__class__.private_output_bucket }}"},
     uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/client_count_daily_view.sh",
     dag=dag)
@@ -293,12 +310,13 @@ main_summary_experiments.set_upstream(main_summary)
 experiments_aggregates.set_upstream(main_summary_experiments)
 experiments_aggregates.set_upstream(experiments_error_aggregates)
 
-experiments_aggregates_import.set_upstream(experiments_aggregates)
+if not is_dev:
+    experiments_aggregates_import.set_upstream(experiments_aggregates)
 search_dashboard.set_upstream(main_summary)
 search_clients_daily.set_upstream(main_summary)
 
-
-add_search_rollup(dag, "daily", 3, upstream=main_summary)
+if not is_dev:
+    add_search_rollup(dag, "daily", instances(prod=3), upstream=main_summary)
 
 clients_daily.set_upstream(main_summary)
 clients_daily_v6.set_upstream(main_summary)
@@ -307,4 +325,5 @@ retention.set_upstream(main_summary)
 
 client_count_daily_view.set_upstream(main_summary)
 
-main_summary_glue.set_upstream(main_summary)
+if not is_dev:
+    main_summary_glue.set_upstream(main_summary)
