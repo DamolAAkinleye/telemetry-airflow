@@ -171,16 +171,19 @@ experiments_aggregates = EMRSparkOperator(
     uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/telemetry_batch_view.py",
     dag=dag)
 
-experiments_aggregates_import = EMRSparkOperator(
-    task_id="experiments_aggregates_import",
-    job_name="Experiments Aggregates Import",
-    execution_timeout=timedelta(hours=10),
-    instance_count=1,
-    owner="robhudson@mozilla.com",
-    email=["telemetry-alerts@mozilla.com", "robhudson@mozilla.com"],
-    env={"date": "{{ ds_nodash }}", "bucket": "{{ task.__class__.private_output_bucket }}"},
-    uri="https://raw.githubusercontent.com/mozilla/firefox-test-tube/master/notebook/import.py",
-    dag=dag)
+if not is_dev:
+    experiments_aggregates_import = EMRSparkOperator(
+        task_id="experiments_aggregates_import",
+        job_name="Experiments Aggregates Import",
+        execution_timeout=timedelta(hours=10),
+        instance_count=1,
+        owner="robhudson@mozilla.com",
+        email=["telemetry-alerts@mozilla.com", "robhudson@mozilla.com"],
+        env={"date": "{{ ds_nodash }}", "bucket": "{{ task.__class__.private_output_bucket }}"},
+        uri="https://raw.githubusercontent.com/mozilla/firefox-test-tube/master/notebook/import.py",
+        dag=dag)
+    experiments_aggregates_import.set_upstream(experiments_aggregates)
+
 
 search_dashboard = EMRSparkOperator(
     task_id="search_dashboard",
@@ -277,23 +280,25 @@ client_count_daily_view = EMRSparkOperator(
     uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/client_count_daily_view.sh",
     dag=dag)
 
-main_summary_glue = EMRSparkOperator(
-    task_id="main_summary_glue",
-    job_name="Main Summary Update Glue",
-    execution_timeout=timedelta(hours=8),
-    owner="bimsland@mozilla.com",
-    email=["telemetry-alerts@mozilla.com", "bimsland@mozilla.com"],
-    instance_count=1,
-    env={
-        "bucket": "{{ task.__class__.private_output_bucket }}",
-        "prefix": "main_summary",
-        "pdsm_version": "{{ var.value.pdsm_version }}",
-        "glue_access_key_id": "{{ var.value.glue_access_key_id }}",
-        "glue_secret_access_key": "{{ var.value.glue_secret_access_key }}",
-        "glue_default_region": "{{ var.value.glue_default_region }}",
-    },
-    uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/update_glue.sh",
-    dag=dag)
+if not is_dev:
+    main_summary_glue = EMRSparkOperator(
+        task_id="main_summary_glue",
+        job_name="Main Summary Update Glue",
+        execution_timeout=timedelta(hours=8),
+        owner="bimsland@mozilla.com",
+        email=["telemetry-alerts@mozilla.com", "bimsland@mozilla.com"],
+        instance_count=1,
+        env={
+            "bucket": "{{ task.__class__.private_output_bucket }}",
+            "prefix": "main_summary",
+            "pdsm_version": "{{ var.value.pdsm_version }}",
+            "glue_access_key_id": "{{ var.value.glue_access_key_id }}",
+            "glue_secret_access_key": "{{ var.value.glue_secret_access_key }}",
+            "glue_default_region": "{{ var.value.glue_default_region }}",
+        },
+        uri="https://raw.githubusercontent.com/mozilla/telemetry-airflow/master/jobs/update_glue.sh",
+        dag=dag)
+    main_summary_glue.set_upstream(main_summary)
 
 
 main_summary_schema.set_upstream(main_summary)
@@ -310,8 +315,6 @@ main_summary_experiments.set_upstream(main_summary)
 experiments_aggregates.set_upstream(main_summary_experiments)
 experiments_aggregates.set_upstream(experiments_error_aggregates)
 
-if not is_dev:
-    experiments_aggregates_import.set_upstream(experiments_aggregates)
 search_dashboard.set_upstream(main_summary)
 search_clients_daily.set_upstream(main_summary)
 
@@ -324,6 +327,3 @@ clients_daily_v6.set_upstream(main_summary)
 retention.set_upstream(main_summary)
 
 client_count_daily_view.set_upstream(main_summary)
-
-if not is_dev:
-    main_summary_glue.set_upstream(main_summary)
