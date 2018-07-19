@@ -5,7 +5,7 @@ if [[ -z "$bucket" || -z "$date" ]]; then
    exit 1
 fi
 
-git clone https://github.com/mozilla/telemetry-streaming.git
+git clone -b aggregates-options https://github.com/acmiyaguchi/telemetry-streaming.git
 cd telemetry-streaming
 sbt assembly
 
